@@ -5,6 +5,8 @@
 
 ---
 
+Check out the examples below on how to get started with commander.
+
 - Basic
 	* [Single Mock pub/sub](https://github.com/CloudProud/commander/tree/master/examples/mock)
   * [Multi group pub/sub](https://github.com/CloudProud/commander/tree/master/examples/mock-multiple-groups)
