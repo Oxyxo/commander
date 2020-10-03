@@ -1,128 +1,31 @@
-# Commander
+# Commander 🚀
+[![GoDoc](https://godoc.org/github.com/CloudProud/commander?status.svg)](https://godoc.org/github.com/CloudProud/commander)
+[![Coverage](https://codecov.io/gh/CloudProud/commander/branch/master/graph/badge.svg)](https://codecov.io/gh/CloudProud/commander)
+[![Coverage Report](https://goreportcard.com/badge/github.com/CloudProud/commander)](https://goreportcard.com/report/github.com/CloudProud/commander)
+[![Test](https://github.com/CloudProud/commander/workflows/test/badge.svg)](https://github.com/CloudProud/commander/actions)
 
-Commander gives you a toolset for writing distributed applications following the CQRS and Event Sourcing architecture using Kafka as a event log. The commander is inspired by the [talk](https://www.youtube.com/watch?v=B1-gS0oEtYc&t) and [architecture](https://github.com/capitalone/cqrs-manager-for-distributed-reactive-services/blob/master/doc/architecture.png) given by Bobby Calderwood.
-
-![The pattern](https://github.com/sysco-middleware/commander/wiki/commander-pattern.jpg)
+Commander is Go library for writing event-driven applications. Enabling event sourcing, RPC over messages, SAGA's, bidirectional streaming and more! Dialects could be used to stream messages from one to another.
 
 ## Getting started
 
-Commander makes use of groups that represent a "data set". Events and commands could be consumed and produced to the set topics. Sometimes a topic is not required to be consumed, in order to avoid unnessasery consumption could it be ignored.
+1. [🚀 Examples](https://github.com/CloudProud/commander/tree/master/examples)
+2. [📚 Documentation](https://godoc.org/github.com/CloudProud/commander)
 
-```go
-users := commander.Group{
-	CommandTopic: commander.Topic{
-		Name: "user-commands",
-	},
-	EventTopic: commander.Topic{
-		Name: "user-events",
-	},
-}
+---
 
-warehouse := commander.Group{
-	CommandTopic: commander.Topic{
-		Name: "warehouse-commands",
-	},
-	EventTopic: commander.Topic{
-		Name: "warehouse-events",
-		IgnoreConsumption: true,
-	},
-}
-```
+- Basic
+	* [Single Mock pub/sub](https://github.com/CloudProud/commander/tree/master/examples/mock)
+  * [Multi group pub/sub](https://github.com/CloudProud/commander/tree/master/examples/mock-multiple-groups)
+  * [Message streaming](https://github.com/CloudProud/commander/tree/master/examples/streaming)
+- Real world examples
+	* [Kafka](https://github.com/CloudProud/commander/tree/master/examples/kafka)
+	* [Zipkin middleware](https://github.com/CloudProud/commander/tree/master/examples/zipkin)
 
-The created groups after need to be included to a commander instance. Once included is it plausible to consume and produce events.
+## Contributing
 
-```go
-package main
+Thank you for your interest in contributing to Commander! ❤
+Check out the open projects and/or issues and feel free to join any ongoing discussion.
 
-import (
-	uuid "github.com/satori/go.uuid"
-	"github.com/sysco-middleware/commander"
-)
+Everyone is welcome to contribute, whether it's in the form of code, documentation, bug reports, feature requests, or anything else. We encourage you to experiment with the project and make contributions to help evolve it to meet your needs!
 
-func main() {
-	users := commander.Group{
-		CommandTopic: commander.Topic{
-			Name: "user-commands",
-		},
-		EventTopic: commander.Topic{
-			Name: "user-events",
-		},
-	}
-
-	warehouse := commander.Group{
-		CommandTopic: commander.Topic{
-			Name: "warehouse-commands",
-		},
-		EventTopic: commander.Topic{
-			Name: "warehouse-events",
-			IgnoreConsumption: true,
-		},
-	}
-
-	config := commander.NewConfig()
-	config.Brokers = []string{"..."}
-
-	cmdr := commander.New(&config)
-	cmdr.AddGroups(users, warehouse)
-	go cmdr.Consume()
-
-	users.OnCommandHandle("NewUser", func(command *commander.Command) *commander.Event {
-		// ...
-
-		return command.NewEvent("UserCreated", 1, uuid.NewV4(), nil)
-	})
-
-	users.OnCommandHandle("SendUserSignupGift", func(command *commander.Command) *commander.Event {
-		available := warehouse.NewCommand("SendUserSignupGift")
-		_, err := warehouse.AsyncCommand(available)
-		if err != nil {
-			// return ...
-		}
-
-		// ...
-	})
-}
-```
-
-To get started quickly download/fork the [boilerplate](https://github.com/sysco-middleware/commander-boilerplate).
-
-## Examples
-
-- [Web shop](https://github.com/jeroenrinzema/commander-sock-store-example)
-
-## Usage and documentation
-
-Please see [godoc](https://godoc.org/github.com/sysco-middleware/commander) for detailed usage docs.
-
-## The architecture
-All services inside commander are triggered by events and commands which are immutable. The commander pattern exists out of 4 layers. Every layer has it's own responsibilities and contain different parts of your application.
-
-- **Web service** - This layer is accessible from the outside. The main responsibility is to preform queries on projections or to write commands to the event log. Optionally could this layer authenticate incoming requests.
-- **Event log (Kafka)** - The event log is the communication layer in between the web service layer and the business logic layer. Kafka is used in Commander as the event log. All messages passed through the event log are immutable.
-- **Business logic** - The business logics layer consumes commands/events to process them. There are two types of consumers that could exists in the business logic layer. The command processor processes commands received from the "commands" topic and generates a resulting event. This event could be a error or the resulting generated data. The projector processes events received from the "events" topic. A projector creates a projection of the consumed events. This projection could be consumed by the web service layer. Command processes and projector processes should never share their states between one another. If a command process requires to preform a validation/query on the latest state should he do it on it's own state.
-- **Datastore and projections** - This layer contains sets of states that could be used to query upon. Every service could have it's own projection created of the consumed commands/events.
-
-## API Overview
-- **High performing** - Commander uses Kafka a distributed, fault-tolerant and wicket fast streaming platform as it's transportation layer
-- **Encryption (work in progress)** - All stored events can be easily encrypted and decrypted
-- **Developer friendly** - We aim to create developer friendly APIs that get you started quickly
-
-## State
-
-Every service can hold it's own state/view of the source (events). A state is required to preform queries on the current state of the produced/consumed events. The state could for example be used to validate uniqueness or fetch the current state of a dataset.
-
-Command processes and projector processes should never share their states between one another. If a command process requires to preform a validation/query on the latest state should he do it on it's own state.
-
-## GDPR (work in progress)
-
-Commander offers various APIs to handle GDPR complaints. To keep the immutable ledger, immutable do we offer the plausibility to encrypt all events. Once a "right to erasure" request needs to be preformed can all data be erased by simply throwing away the key.
-
-## Tests
-
-To run the commander tests make sure that you have set the following environment variables.
-
-```
-export TEST_KAFKA_COMMAND_GROUP=TestCommand
-export TEST_KAFKA_CONSUME_GROUP=TestConsume
-export TEST_KAFKA_SERVERS=kafka:9092
-```
+See the [contributing guide](https://github.com/CloudProud/commander/blob/master/CONTRIBUTING.md) for more details.

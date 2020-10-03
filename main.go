@@ -2,9 +2,14 @@ package commander
 
 import (
 	"errors"
-	"sync"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/jeroenrinzema/commander/internal/types"
+	"github.com/jeroenrinzema/commander/middleware"
+)
+
+const (
+	// DebugEnv os debug env key
+	DebugEnv = "DEBUG"
 )
 
 const (
@@ -14,101 +19,83 @@ const (
 	AfterEvent = "after"
 )
 
-// New creates a new commander instance of the given config
-func New(config *Config) (*Commander, error) {
-	var err error
-	var producer *Producer
-	var consumer *Consumer
+var (
+	// ErrTimeout is returned when a timeout is reached when awaiting a responding event
+	ErrTimeout = errors.New("timeout reached")
+)
 
-	producer, err = NewProducer(config.Kafka)
-	if err != nil {
-		return nil, err
+// NewClient constructs a new commander client.
+// A client is needed to control a collection of groups.
+func NewClient(groups ...*Group) (*Client, error) {
+	middleware := middleware.NewClient()
+	client := &Client{
+		UseImpl: middleware,
+		Groups:  groups,
 	}
 
-	consumer, err = NewConsumer(config.Kafka)
-	if err != nil {
-		return nil, err
-	}
+	appendMiddleware(middleware, groups)
+	topics := pullTopicsFromGroups(groups)
+	dialects := groupTopicsByDialect(topics)
 
-	commander := Commander{
-		Producer: producer,
-		Consumer: consumer,
-		closing:  make(chan bool, 1),
-	}
-
-	return &commander, nil
-}
-
-// Commander contains all information of a commander instance
-type Commander struct {
-	*Config
-	Groups   []*Group
-	Producer *Producer
-	Consumer *Consumer
-	closing  chan bool
-	mutex    sync.Mutex
-}
-
-// Consume starts consuming messages with the set consumer.
-func (commander *Commander) Consume() {
-	commander.Consumer.Consume()
-}
-
-// ValidateGroup validates the given group and returns a error if the group is not valid/incomplete
-func (commander *Commander) ValidateGroup(group *Group) error {
-	if len(group.CommandTopic.Name) == 0 {
-		return errors.New("The given group has no command topic name set")
-	}
-
-	if len(group.EventTopic.Name) == 0 {
-		return errors.New("The given group has no event topic name set")
-	}
-
-	return nil
-}
-
-// AddGroups registeres a commander group and initializes it with
-// the set consumer and producer.
-func (commander *Commander) AddGroups(groups ...*Group) error {
-	for _, group := range groups {
-		err := commander.ValidateGroup(group)
+	for dialect, topics := range dialects {
+		err := dialect.Open(topics)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	commander.mutex.Lock()
-	defer commander.mutex.Unlock()
+	return client, nil
+}
 
-	commander.Groups = append(commander.Groups, groups...)
-	err := commander.Consumer.AddGroups(groups...)
+// Client manages the consumers, producers and groups.
+type Client struct {
+	middleware.UseImpl
+	Groups []*Group
+}
 
-	if err != nil {
-		return err
+// Close closes the consumer and producer
+func (client *Client) Close() error {
+	dialects := make(map[types.Dialect]bool)
+
+	for _, group := range client.Groups {
+		for _, topic := range group.Topics {
+			if dialects[topic.Dialect()] {
+				continue
+			}
+
+			topic.Dialect().Close()
+			dialects[topic.Dialect()] = true
+		}
 	}
 
 	return nil
 }
 
-// Produce a new message to kafka. A error will be returnes if something went wrong in the process.
-func (commander *Commander) Produce(message *kafka.Message) error {
-	return commander.Producer.Produce(message)
+func pullTopicsFromGroups(groups []*Group) []types.Topic {
+	returned := []types.Topic{}
+	for _, group := range groups {
+		returned = append(returned, group.Topics...)
+	}
+
+	return returned
 }
 
-// BeforeClosing returns a channel that gets called before the commander
-// instance is closed.
-func (commander *Commander) BeforeClosing() <-chan bool {
-	return commander.closing
+func appendMiddleware(middleware middleware.UseImpl, groups []*Group) {
+	for _, group := range groups {
+		group.Middleware = middleware
+	}
 }
 
-// BeforeConsuming returns a channel which is called before a messages is
-// passed on to a consumer. Two arguments are returned. The events channel and a closing function.
-func (commander *Commander) BeforeConsuming() (<-chan kafka.Event, func()) {
-	return commander.Consumer.OnEvent(BeforeEvent)
-}
+func groupTopicsByDialect(topics []types.Topic) map[types.Dialect][]types.Topic {
+	returned := map[types.Dialect][]types.Topic{}
+	for _, topic := range topics {
+		_, has := returned[topic.Dialect()]
+		if !has {
+			returned[topic.Dialect()] = []types.Topic{}
+		}
 
-// AfterConsumed returns a channel which is called after a message is consumed.
-// Two arguments are returned. The events channel and a closing function.
-func (commander *Commander) AfterConsumed() (<-chan kafka.Event, func()) {
-	return commander.Consumer.OnEvent(AfterEvent)
+		returned[topic.Dialect()] = append(returned[topic.Dialect()], topic)
+	}
+
+	return returned
 }
